@@ -160,7 +160,7 @@ int main ( int argc, char *argv[] )
 			spi_tx ( &spi, txbuf, LED_COUNT*3*2 );
 			
 			/* can be removed */
-			usleep ( 10 * 1000);
+			//usleep ( 10 * 1000);
 		}
 	}
 
