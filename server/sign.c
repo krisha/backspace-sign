@@ -139,6 +139,8 @@ int main ( int argc, char *argv[] )
 	struct spi spi;
 	uint8_t *txbuf;
 	int sockfd;
+	uint8_t r, g, b;
+	int i;
 		
 	if ( spi_open ( &spi, 0, 8, 20000000  ) == -1 )
 		return -1;
@@ -156,6 +158,18 @@ int main ( int argc, char *argv[] )
 			/* zeros */
 			for ( i = 0; i < LED_COUNT*3; i++ )
 				txbuf[LED_COUNT*3+i] = 0;
+				
+			/* change BRG to RGB, set highest bit */
+			for ( i = 0; i < LED_COUNT*3; i++ )
+			{
+				r = txbuf[i + 0] | 0x80;
+				g = txbuf[i + 1] | 0x80;
+				b = txbuf[i + 2] | 0x80;
+				
+				txbuf[i + 0] = b;
+				txbuf[i + 1] = r;
+				txbuf[i + 2] = g;
+			}
 			
 			spi_tx ( &spi, txbuf, LED_COUNT*3*2 );
 			
