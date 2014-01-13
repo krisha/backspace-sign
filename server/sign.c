@@ -142,7 +142,7 @@ int main ( int argc, char *argv[] )
 	uint8_t r, g, b;
 	int i;
 		
-	if ( spi_open ( &spi, 0, 8, 20000000  ) == -1 )
+	if ( spi_open ( &spi, 0, 8, 10000000  ) == -1 )
 		return -1;
 		
 	sockfd = udp_open ( );
@@ -160,7 +160,7 @@ int main ( int argc, char *argv[] )
 				txbuf[LED_COUNT*3+i] = 0;
 				
 			/* change BRG to RGB, set highest bit */
-			for ( i = 0; i < LED_COUNT*3; i++ )
+			for ( i = 0; i < LED_COUNT*3; i += 3 )
 			{
 				r = txbuf[i + 0] | 0x80;
 				g = txbuf[i + 1] | 0x80;
