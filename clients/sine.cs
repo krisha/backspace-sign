@@ -31,8 +31,8 @@ namespace SomethingForLEDSign
 
         static void Main(string[] args)
         {
-            const int LED_COUNT = 156;
-            const int LEDS_USED = 131;
+            const int LED_COUNT = 126;
+            const int LEDS_USED = 126;
 
             byte[] data = new byte[LED_COUNT * 3];
             for (int i = 0; i < LED_COUNT * 3; i++)
@@ -109,7 +109,7 @@ namespace SomethingForLEDSign
 
 
 
-                client.Send(data, data.Length, "schild", 10001);
+                client.Send(data, data.Length, "schild", 10002);
 
                 System.Threading.Thread.Sleep(10 + speed);
             }

@@ -27,20 +27,27 @@ namespace SignMultiplexer
 {
     class Program
     {
-        const int dataServerPort = 10001;
-        const int powerServerPort = 10002;
-        const string host = "10.1.20.236";
-        const int ledCount = 156;
+        const int dataServerPort = 10002;
+        const int powerServerPort = 10003;
+        const string host = "schild";
+        const int ledCount = 126;
         const int slotTime = 90;
+
+        static UdpClient client = new UdpClient(host, 10001);
 
         static void Main(string[] args)
         {
             Console.WriteLine("SignMultiplexer started");
 
+            Console.WriteLine("Connecting to " + host);
+            Console.WriteLine("Listening on " + dataServerPort + " (data)");
+            Console.WriteLine("Listening on " + powerServerPort + " (power)");
+            Console.WriteLine("Slot time set to " + slotTime);
+
             UdpClient dataServer = new UdpClient(new IPEndPoint(IPAddress.Any, dataServerPort));
             UdpClient powerServer = new UdpClient(new IPEndPoint(IPAddress.Any, powerServerPort));
 
-            dataServer.BeginReceive(new AsyncCallback ( DataReceive ), dataServer );
+            dataServer.BeginReceive(new AsyncCallback(DataReceive), dataServer);
             powerServer.BeginReceive(new AsyncCallback(PowerReceive), powerServer);
 
             while (true)
@@ -129,7 +136,7 @@ namespace SignMultiplexer
             {
                 /* remove dead endpoints */
                 int rem = penalties.RemoveAll(x => DateTime.Now.Subtract(x.lastActive).TotalSeconds >= 4 * slotTime);
-                if ( rem != 0 )
+                if (rem != 0)
                     Console.WriteLine("[{0}] removed {1} dead endpoint(s)", DateTime.Now, rem);
 
                 if (penalties.Count == 0)
@@ -154,7 +161,7 @@ namespace SignMultiplexer
         static bool EndpointAllowedToSend(IPEndPoint endpoint)
         {
             string newEndpoint =
-                String.Format("[{0}] dataServer: new client {1}, penalty {2}", DateTime.Now, endpoint, PenaltyGet ( endpoint ) );
+                String.Format("[{0}] dataServer: new client {1}, penalty {2}", DateTime.Now, endpoint, PenaltyGet(endpoint));
 
             if (endpoint == null)
                 return false;
@@ -166,14 +173,14 @@ namespace SignMultiplexer
                 lastActivity = DateTime.Now;
 
                 PenaltyAdd(endpoint);
-                Console.WriteLine(newEndpoint );
+                Console.WriteLine(newEndpoint);
 
                 return true;
             }
 
             PenaltyActive(endpoint);
 
-            if (DateTime.Now.Subtract(lastActivity).TotalSeconds >= /*30 +*/ PenaltyGet ( endpoint )/2 )
+            if (DateTime.Now.Subtract(lastActivity).TotalSeconds >= /*30 +*/ PenaltyGet(endpoint) / 2)
             {
                 /* no activity for >= 30 seconds */
 
@@ -195,7 +202,7 @@ namespace SignMultiplexer
             {
                 /* new endpoint */
 
-                if (DateTime.Now.Subtract(lastEndpointChange).TotalSeconds >= /*2 * 60 +*/ PenaltyGet ( endpoint ))
+                if (DateTime.Now.Subtract(lastEndpointChange).TotalSeconds >= /*2 * 60 +*/ PenaltyGet(endpoint))
                 {
                     /* old one active for more than 2 minutes */
 
@@ -220,11 +227,11 @@ namespace SignMultiplexer
         {
             UdpClient dataServer = (UdpClient)result.AsyncState;
 
-            IPEndPoint remote = new IPEndPoint ( IPAddress.Any, 0 );
+            IPEndPoint remote = new IPEndPoint(IPAddress.Any, 0);
 
             byte[] data = dataServer.EndReceive(result, ref remote);
 
-            if (EndpointAllowedToSend(remote) && ClientSend ( data ) )
+            if (EndpointAllowedToSend(remote) && ClientSend(data))
                 dataServer.Send(new byte[1] { (byte)'1' }, 1, remote);
             else
                 dataServer.Send(new byte[1] { (byte)'0' }, 1, remote);
@@ -248,16 +255,30 @@ namespace SignMultiplexer
 
             if (data != null && data.Length == 1)
             {
-                if (data[0] == '1')
+                if (data[0] == '2')
                 {
                     on = true;
                     Console.WriteLine("powerServer: toggled to on");
                 }
+                else if (data[0] == '1')
+                {
+                    on = false;
+
+                    byte[] ar = new byte[ledCount * 3];
+                    for (int i = 0; i < ar.Length; i += 3)
+                    {
+                        ar[i + 0] = 1;
+                        ar[i + 1] = 1;
+                        ar[i + 2] = 0;
+                    }
+                    ClientSend(ar, true);
+
+                    Console.WriteLine("powerServer: toggled to standby/dimmed");
+                }
                 else if (data[0] == '0')
                 {
-                    on = true;
-                    ClientSend(new byte[ledCount * 3]);
                     on = false;
+                    ClientSend(new byte[ledCount * 3], true);
                     Console.WriteLine("powerServer: toggled to off");
                 }
                 else
@@ -269,12 +290,14 @@ namespace SignMultiplexer
             powerServer.BeginReceive(new AsyncCallback(PowerReceive), powerServer);
         }
 
-        static bool ClientSend(byte[] data)
+        static bool ClientSend(byte[] data, bool ignorePower = false)
         {
-            if (!on || data == null)
+            if (data == null || (!on && !ignorePower))
                 return false;
 
-            new UdpClient().Send(data, data.Length, host, dataServerPort);
+            //with mono the following line crashes after some seconds of use with: System.Net.Sockets.SocketException: Could not resolve host 'schild/localhost'
+            //new UdpClient().Send(data, data.Length, host, 10001);
+            client.Send(data, data.Length);
 
             return true;
         }

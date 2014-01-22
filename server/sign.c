@@ -10,7 +10,7 @@
 #include <netinet/in.h>
 #include <strings.h>
 
-#define LED_COUNT 156
+#define LED_COUNT 126
 
 struct spi
 {
