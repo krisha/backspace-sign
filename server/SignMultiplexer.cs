@@ -267,9 +267,9 @@ namespace SignMultiplexer
                     byte[] ar = new byte[ledCount * 3];
                     for (int i = 0; i < ar.Length; i += 3)
                     {
-                        ar[i + 0] = 1;
-                        ar[i + 1] = 1;
-                        ar[i + 2] = 0;
+                        ar[i + 0] = 4;
+                        ar[i + 1] = 4;
+                        ar[i + 2] = 4;
                     }
                     ClientSend(ar, true);
 
