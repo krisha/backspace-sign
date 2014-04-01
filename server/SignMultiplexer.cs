@@ -29,9 +29,12 @@ namespace SignMultiplexer
     {
         const int dataServerPort = 10002;
         const int powerServerPort = 10003;
+        const int webServerPort = 10004;
+
         const string host = "schild";
         const int ledCount = 126;
         const int slotTime = 90;
+        const int webTimeout = 15;
 
         static UdpClient client = new UdpClient(host, 10001);
 
@@ -42,20 +45,38 @@ namespace SignMultiplexer
             Console.WriteLine("Connecting to " + host);
             Console.WriteLine("Listening on " + dataServerPort + " (data)");
             Console.WriteLine("Listening on " + powerServerPort + " (power)");
+            Console.WriteLine("Listening on " + webServerPort + " (web)");
             Console.WriteLine("Slot time set to " + slotTime);
 
             UdpClient dataServer = new UdpClient(new IPEndPoint(IPAddress.Any, dataServerPort));
             UdpClient powerServer = new UdpClient(new IPEndPoint(IPAddress.Any, powerServerPort));
+            UdpClient webServer = new UdpClient(new IPEndPoint(IPAddress.Any, webServerPort));
 
             dataServer.BeginReceive(new AsyncCallback(DataReceive), dataServer);
             powerServer.BeginReceive(new AsyncCallback(PowerReceive), powerServer);
+            webServer.BeginReceive(new AsyncCallback(WebReceive), webServer);
 
             while (true)
             {
                 PenaltyAdjust();
+                ShutdownCheck();
                 System.Threading.Thread.Sleep(10000);
             }
+        }
 
+        /// <summary>
+        /// does not pay attention to a full shutdown - might reenable standby.
+        /// </summary>
+        static void ShutdownCheck()
+        {
+            if (on)
+                return;
+
+            if ( DateTime.Now.Subtract ( lastActivity ).TotalSeconds >= webTimeout )
+            {
+                lastEndpointWasWeb = false;
+                StandbySend();
+            }
         }
 
         static bool EndpointEquals(IPEndPoint endpoint1, IPEndPoint endpoint2)
@@ -157,6 +178,7 @@ namespace SignMultiplexer
         static IPEndPoint lastEndpoint = null;
         static DateTime lastEndpointChange = DateTime.MinValue;
         static DateTime lastActivity = DateTime.MinValue;
+        static bool lastEndpointWasWeb = false;
 
         static bool EndpointAllowedToSend(IPEndPoint endpoint)
         {
@@ -180,7 +202,18 @@ namespace SignMultiplexer
 
             PenaltyActive(endpoint);
 
-            if (DateTime.Now.Subtract(lastActivity).TotalSeconds >= /*30 +*/ PenaltyGet(endpoint) / 2)
+            bool noActivityDetected = false;
+            double lastActivityDiff = DateTime.Now.Subtract(lastActivity).TotalSeconds;
+            if (lastEndpointWasWeb)
+            {
+                if (lastActivityDiff >= webTimeout)
+                    noActivityDetected = true;
+            }
+            else
+                if (lastActivityDiff >= PenaltyGet(endpoint) / 2)
+                    noActivityDetected = true;
+
+            if (noActivityDetected)
             {
                 /* no activity for >= 30 seconds */
 
@@ -223,6 +256,31 @@ namespace SignMultiplexer
             return true;
         }
 
+        /// <summary>
+        /// for the web application (painting app)
+        /// uses less timeout and is available in standby
+        /// </summary>
+        /// <param name="result"></param>
+        static void WebReceive(IAsyncResult result)
+        {
+            UdpClient webServer = (UdpClient)result.AsyncState;
+
+            IPEndPoint remote = new IPEndPoint(IPAddress.Any, 0);
+
+            byte[] data = webServer.EndReceive(result, ref remote);
+
+            if (EndpointAllowedToSend(remote) && ClientSend(data, true))
+            {
+                lastEndpointWasWeb = true;
+                webServer.Send(new byte[1] { (byte)'1' }, 1, remote);
+            }
+            else
+                webServer.Send(new byte[1] { (byte)'0' }, 1, remote);
+
+
+            webServer.BeginReceive(new AsyncCallback(WebReceive), webServer);
+        }
+
         static void DataReceive(IAsyncResult result)
         {
             UdpClient dataServer = (UdpClient)result.AsyncState;
@@ -232,12 +290,27 @@ namespace SignMultiplexer
             byte[] data = dataServer.EndReceive(result, ref remote);
 
             if (EndpointAllowedToSend(remote) && ClientSend(data))
+            {
+                lastEndpointWasWeb = false;
                 dataServer.Send(new byte[1] { (byte)'1' }, 1, remote);
+            }
             else
                 dataServer.Send(new byte[1] { (byte)'0' }, 1, remote);
 
 
             dataServer.BeginReceive(new AsyncCallback(DataReceive), dataServer);
+        }
+
+        static void StandbySend()
+        {
+            byte[] ar = new byte[ledCount * 3];
+            for (int i = 0; i < ar.Length; i += 3)
+            {
+                ar[i + 0] = 4;
+                ar[i + 1] = 4;
+                ar[i + 2] = 4;
+            }
+            ClientSend(ar, true);
         }
 
         static bool on = true;
@@ -264,14 +337,7 @@ namespace SignMultiplexer
                 {
                     on = false;
 
-                    byte[] ar = new byte[ledCount * 3];
-                    for (int i = 0; i < ar.Length; i += 3)
-                    {
-                        ar[i + 0] = 4;
-                        ar[i + 1] = 4;
-                        ar[i + 2] = 4;
-                    }
-                    ClientSend(ar, true);
+                    StandbySend();
 
                     Console.WriteLine("powerServer: toggled to standby/dimmed");
                 }
