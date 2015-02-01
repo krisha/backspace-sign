@@ -4,13 +4,27 @@
 #include <sys/ioctl.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <errno.h>
 #include <unistd.h>
 
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <strings.h>
 
+#define SPI_DEVICE "/dev/spidev0.0"
+#define SPI_MODE 0
+#define SPI_BITS_PER_WORD 8
+#define SPI_SPEED 10000000
+
+#define UDP_PORT 10001
 #define LED_COUNT 126
+#define FRAME_LEN (LED_COUNT * 3)
+
+void parm_err ( )
+{
+	fprintf( stderr, "errornous parameter\n" );
+	errno = EINVAL;
+}
 
 struct spi
 {
@@ -24,15 +38,15 @@ int spi_open ( struct spi *spi, uint8_t mode, uint8_t bits_per_word, uint32_t sp
 {
 	if ( !spi )
 	{
-		printf ( "errornous parameter\n" );
+		parm_err();
 		return -1;
 	}
 	
-	spi->fd = open ( "/dev/spidev0.0", O_RDWR, 0 );
+	spi->fd = open ( SPI_DEVICE, O_RDWR, 0 );
 	
 	if ( spi->fd == -1 )
 	{
-		printf ( "could not open device\n" );
+		perror( "failed to open spi device" );
 		return -1;
 	}
 	
@@ -40,7 +54,7 @@ int spi_open ( struct spi *spi, uint8_t mode, uint8_t bits_per_word, uint32_t sp
 	spi->mode = mode;
 	if ( ioctl ( spi->fd, SPI_IOC_WR_MODE, &spi->mode ) == -1 )
 	{
-		printf ( "failed to set mode\n" );
+		perror( "failed to set mode" );
 		return -1;
 	}
 	
@@ -48,7 +62,7 @@ int spi_open ( struct spi *spi, uint8_t mode, uint8_t bits_per_word, uint32_t sp
 	spi->bits_per_word = bits_per_word;
 	if ( ioctl ( spi->fd, SPI_IOC_WR_BITS_PER_WORD, &spi->bits_per_word ) == -1 )
 	{
-		printf ( "failed to set bits per word\n" );
+		perror( "failed to set bits per word" );
 		return -1;
 	}
 	
@@ -56,30 +70,32 @@ int spi_open ( struct spi *spi, uint8_t mode, uint8_t bits_per_word, uint32_t sp
 	spi->speed = speed;
 	if ( ioctl ( spi->fd, SPI_IOC_WR_MAX_SPEED_HZ, &spi->speed ) == -1 )
 	{
-		printf ( "error setting frequency\n" );
+		perror( "failed to set frequency" );
 		return -1;
 	}
 	
 	return 0;
 }
 
-void spi_close ( struct spi *spi )
-{
-	if ( !spi )
-		return;
-		
-	close ( spi->fd );
-}
-
 int spi_tx ( struct spi *spi, uint8_t *data, size_t length )
 {
 	if ( !spi )
 	{
-		printf ( "error writing SPI data\n" );
+		parm_err ();
 		return -1;
 	}
-	
+
 	return write ( spi->fd, data, length );
+}
+
+int spi_close ( struct spi *spi )
+{
+	if ( !spi )
+	{
+		parm_err ();
+		return -1;
+	}
+	return close ( spi->fd );
 }
 
 int udp_open ( )
@@ -92,17 +108,17 @@ int udp_open ( )
 	
 	if ( sockfd == -1 )
 	{
-		printf ( "udp opening failed\n" );
+		perror ( "failed to create udp socket" );
 		return -1;
 	}
 	
 	bzero ( &addr_server, sizeof ( addr_server ) );
 	addr_server.sin_family = AF_INET;
 	addr_server.sin_addr.s_addr = htonl ( INADDR_ANY );
-	addr_server.sin_port = htons ( 10001 );
+	addr_server.sin_port = htons ( UDP_PORT );
 	if ( bind ( sockfd, (struct sockaddr *)&addr_server, sizeof ( addr_server ) ) == 1 )
 	{
-		printf ( "udp error binding\n" );
+		perror ( "failed to bind udp socket" );
 		return -1;
 	}
 	
@@ -112,25 +128,38 @@ int udp_open ( )
 int udp_read_frame ( int sockfd, uint8_t *data )
 {
 	struct sockaddr addr_client;
-	socklen_t len;
-	int rxlen;
+	socklen_t addr_len;
+	ssize_t rxlen;
 	int valid;
 	
 	if ( !data )
 	{
-		printf ( "!data\n" ); 
+		parm_err ();
 		return -1;
 	}
 	
-	len = sizeof ( addr_client );
-	rxlen = recvfrom ( sockfd, data, LED_COUNT*3, 0, &addr_client, &len );
+	addr_len = sizeof ( addr_client );
+	rxlen = recvfrom ( sockfd, data, FRAME_LEN, 0, &addr_client, &addr_len);
+	if (rxlen == -1)
+	{
+		perror ( "failed to receive frame" );
+		return -1;
+	}
 	
-	valid = rxlen == LED_COUNT * 3;
+	valid = rxlen == FRAME_LEN;
+	if ( !valid )
+	{
+		fprintf ( stderr, "ignoring frame of invalid length %zd\n", rxlen );
+	}
 
-	sendto ( sockfd, valid ? "\x31" : "\x30", 1, 0, &addr_client, sizeof ( addr_client ) );
-		
+	if ( sendto ( sockfd, valid ? "\x31" : "\x30", 1, 0, &addr_client,
+				sizeof ( addr_client ) ) == -1 )
+	{
+		perror ( "failed to send frame" );
+		return -1;
+	}
+
 	return valid-1;
-
 }
 
 
@@ -142,25 +171,29 @@ int main ( int argc, char *argv[] )
 	uint8_t r, g, b;
 	int i;
 		
-	if ( spi_open ( &spi, 0, 8, 10000000  ) == -1 )
-		return -1;
+	if ( spi_open ( &spi, SPI_MODE, SPI_BITS_PER_WORD, SPI_SPEED) == -1 )
+		return 1;
 		
 	sockfd = udp_open ( );
 	if ( sockfd == -1 )
-		return -1;
-	
-	txbuf = malloc ( LED_COUNT*3*2 );
+		return 2;
+
+	txbuf = malloc ( FRAME_LEN*2 );
+	if (!txbuf) {
+		fprintf( stderr, "failed to allocate %d bytes\n", FRAME_LEN*2 );
+		return 3;
+	}
 	
 	while ( 1 )
 	{
 		if ( !udp_read_frame ( sockfd, txbuf ) )
 		{
 			/* zeros */
-			for ( i = 0; i < LED_COUNT*3; i++ )
-				txbuf[LED_COUNT*3+i] = 0;
+			for ( i = 0; i < FRAME_LEN; i++ )
+				txbuf[FRAME_LEN+i] = 0;
 				
 			/* change BRG to RGB, set highest bit */
-			for ( i = 0; i < LED_COUNT*3; i += 3 )
+			for ( i = 0; i < FRAME_LEN; i += 3 )
 			{
 				r = txbuf[i + 0] | 0x80;
 				g = txbuf[i + 1] | 0x80;
@@ -171,15 +204,13 @@ int main ( int argc, char *argv[] )
 				txbuf[i + 2] = g;
 			}
 			
-			spi_tx ( &spi, txbuf, LED_COUNT*3*2 );
-			
-			/* can be removed */
-			//usleep ( 10 * 1000);
+			spi_tx ( &spi, txbuf, FRAME_LEN*2 );
 		}
 	}
 
 	/* never reached */
 	free ( txbuf );
+	close ( sockfd );
 	spi_close ( &spi );
 
 	return 0;
